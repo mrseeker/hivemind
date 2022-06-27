@@ -1,6 +1,6 @@
-# Training ALBERT with decentralized averaging
+# Training Fairseq with decentralized averaging
 
-This tutorial will walk you through the steps to set up collaborative training with the ALBERT-large-v2 model and the
+This tutorial will walk you through the steps to set up collaborative training with the fairseq model and the
 WikiText103 dataset. It uses Hugging Face [datasets](https://github.com/huggingface/datasets)
 and [transformers](https://github.com/huggingface/transformers/) libraries to compute local updates,
 using `hivemind.Optimizer` to exchange information between peers.
