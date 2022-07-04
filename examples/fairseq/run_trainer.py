@@ -7,11 +7,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 import torch
+from torch.utils import data
 import transformers
-from datasets import load_from_disk
+from datasets import load_dataset, Dataset
 from torch.utils.data import DataLoader
 from torch_optimizer import Lamb
-from transformers import DataCollatorForLanguageModeling, HfArgumentParser, TrainingArguments, set_seed, XGLMConfig, XGLMForCausalLM, GPT2TokenizerFast
+from transformers import default_data_collator, HfArgumentParser, TrainingArguments, set_seed, XGLMConfig, XGLMForCausalLM, GPT2Tokenizer
 from transformers.optimization import get_linear_schedule_with_warmup
 from transformers.trainer import Trainer
 from transformers.trainer_utils import is_main_process
@@ -20,9 +21,11 @@ from hivemind import DHT, Float16Compression, Optimizer, get_dht_time
 from hivemind.utils.logging import get_logger, use_hivemind_log_handler
 from hivemind.utils.networking import log_visible_maddrs
 
+import numpy as np
+
 import utils
 from arguments import (
-    FairseqrainingArguments,
+    FairseqTrainingArguments,
     AveragerArguments,
     CollaborationArguments,
     DatasetArguments,
@@ -34,6 +37,30 @@ logger = get_logger(__name__)
 
 LRSchedulerBase = getattr(torch.optim.lr_scheduler, "_LRScheduler", None)
 
+class FbDataset(data.Dataset):
+    def __init__(self, block_size, map_file, max_samples=None):
+        self.half_blocks = False
+        if block_size is not None and int(block_size) < 2048:
+            self.half_blocks = True
+        self.npz = np.memmap(map_file, mode="r", dtype="uint16").reshape((-1, 2048))
+        self.samples = self.npz.shape[0]
+        if self.half_blocks:
+            self.samples *= 2
+        if not max_samples is None:
+            self.samples = int(max_samples)
+        self.skip = 0
+    def __len__(self):
+        return self.samples
+    def __getitem__(self, _id):
+        nth = _id + self.skip
+        offset = 0
+        length = 2048
+        if self.half_blocks:
+            nth = _id // 2
+            offset = 1024 * (_id % 2)
+            length = 1024
+        data = torch.tensor(self.npz[nth][offset:offset+length].astype(np.int64))
+        return {'input_ids': data, 'labels': data}
 
 def setup_transformers_logging(process_rank: int):
     if is_main_process(process_rank):
@@ -200,20 +227,19 @@ def main():
 
     config = XGLMConfig.from_pretrained(dataset_args.config_path, cache_dir=dataset_args.cache_dir)
     try:
-        tokenizer = GPT2TokenizerFast.from_pretrained(dataset_args.tokenizer_path, cache_dir=dataset_args.cache_dir)
+        tokenizer = GPT2Tokenizer.from_pretrained("KoboldAI/fairseq-dense-125M", cache_dir=dataset_args.cache_dir)
     except OSError:
         logger.fatal(
-            f"No tokenizer data found in {dataset_args.tokenizer_path}, "
-            f"please run ./tokenize_wikitext103.py before running this"
+            f"No tokenizer found"
         )
         sys.exit(1)
 
     model = get_model(training_args, config, tokenizer)
     model.to(training_args.device)
 
-    tokenized_datasets = load_from_disk(Path(dataset_args.dataset_path))
+    tokenized_datasets = FbDataset(dataset_args.block_size, dataset_args.dataset_path, dataset_args.max_train_samples)
     # This data collator will take care of randomly masking the tokens.
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer)
+    data_collator = default_data_collator
 
     validators, local_public_key = utils.make_validators(collaboration_args.run_id)
 
@@ -295,8 +321,8 @@ def main():
         args=training_args,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=tokenized_datasets if training_args.do_train else None,
+        eval_dataset=tokenized_datasets if training_args.do_eval else None,
         optimizers=(optimizer, NoOpScheduler(optimizer)),
         callbacks=[
             CollaborativeCallback(

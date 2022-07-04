@@ -109,9 +109,14 @@ class CollaborationArguments(OptimizerArguments, BaseTrainingArguments):
 @dataclass
 class DatasetArguments:
     dataset_path: Optional[str] = field(
-        default="data/tokenized_wikitext", metadata={"help": "Path to the tokenized dataset"}
+        default="data/wikitext.map", metadata={"help": "Path to the tokenized dataset"}
     )
-    tokenizer_path: Optional[str] = field(default="data/tokenizer", metadata={"help": "Path to the tokenizer"})
+    tokenizer_path: Optional[str] = field(default="gpt2", metadata={"help": "Path to the tokenizer"})
+    preprocessing_num_workers: Optional[int] = field(default=8, metadata={"help": "Number of workers"})
+    overwrite_cache: Optional[bool] = field(default=False, metadata={"help": "Overwrite cache"})
+    block_size: Optional[int] = field(default=2048, metadata={"help": "Overwrite cache"})
+    max_train_samples: Optional[int] = field(default=None, metadata={"help": "Overwrite cache"})
+    max_eval_samples: Optional[int] = field(default=None, metadata={"help": "Overwrite cache"})
     config_path: Optional[str] = field(
         default="https://huggingface.co/KoboldAI/fairseq-dense-125M/raw/main/config.json",
         metadata={"help": "Path to the model config"},
@@ -125,7 +130,7 @@ class FairseqTrainingArguments(TrainingArguments):
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
     gradient_accumulation_steps: int = 2
-    seq_length: int = 512
+    seq_length: int = 2048
 
     total_steps: int = 125_000  # please note: this only affects the learning rate schedule
     learning_rate: float = 1e-6
@@ -135,7 +140,7 @@ class FairseqTrainingArguments(TrainingArguments):
     max_grad_norm: float = 1.0
     clamp_value: float = 10000.0
 
-    fp16: bool = True
+    fp16: bool = False
     fp16_opt_level: str = "O2"
     do_train: bool = True
     do_eval: bool = False
